@@ -31,50 +31,64 @@ end
 def page_url(page_number)
   if @listing_url =~ /page=/
     @listing_url.gsub(/page=\d+/, "page=#{page_number.to_s}")
-  else
+  elsif @listing_url =~ /\?/
     @listing_url + "&page=#{page_number.to_s}"
+  else
+    @listing_url + "?page=#{page_number.to_s}"
   end
 end
 
-html = ""
+`open /tmp/listings.html`
 
 first_page = agent.get page_url(1)
 
-page_count = first_page.search("div.pager_top").text.scan(/of (\d+)/).first.first.to_i
-(1..page_count).each { |page|
-  sleep 0.5
-  #puts "getting page #{page}"
-  page = agent.get page_url(page)
-
-  urls = page.search("div.unsponsored div.item_inner div.photo a").map{|e| e.attribute("href").to_s }.flatten.uniq
-
-  urls.each {|url|
-    sleep 0.5
-    page = agent.get url
-
-    availability = page.search("div.price div.small").first.to_s.scan(/available( on)?\s+([now\/0-9]+)/m).flatten[1] || "unknown"
-
-    if @available_date.nil? or @available_date.any? {|a| a == availability }
-      images = page.search("a.shadowbox_badge").map{|e| e.attribute("href").to_s }.flatten
-      title = page.search("h1")
-      html += "<h1>#{title.to_html}</h1>"
-
-      images.each do |image|
-        html += "<a href='#{full_url(url)}'><img src='#{image}'/></a>"
-      end
-      puts full_url(url)
-      html += "<br><hr><br>"
-    elsif availability
-      # puts "available #{availability.first}"
-    end
-    #puts "#{availability.first.first} #{url}"
-  }
-}
-
 File.open("/tmp/listings.html", "w") do |f|
   f.write("<html><body>")
-  f.write(html)
+
+
+  page_count = first_page.search(".pagination a").map{|z| z.text.to_i }.max
+  puts "#{page_count} pages available"
+  (1..page_count).each { |page|
+    sleep 0.5
+    puts "getting #{page_url(page)}"
+    page = agent.get page_url(page)
+
+    urls = page.search("div.listings div.item").reject{|e| e.search("div.featured_tag").size > 0}.map{|e| e.search("div.photo a").attribute("href").to_s }.flatten.uniq.reject{|a| a =~ /featured=/ }
+
+    urls.each {|url|
+      sleep 0.5
+      puts "getting url #{url}"
+      page = agent.get url
+
+      html = ''
+
+      availability = page.search("div.vitals div.details_info").first.to_s.scan(/Available( on)?\s+([now\/0-9]+)/im).flatten.last || "unknown"
+
+      if availability != 'unknown'
+        page.search("div.vitals div.details_info h6").first.remove
+        availability = page.search("div.vitals div.details_info").first.text.strip
+      end
+
+      if @available_date.nil? or @available_date.any? {|a| a == availability }
+        images = page.search("#image-gallery li.photo img").map{|e| e.attribute("src").to_s }.flatten
+        title = page.search("h1.building-title")
+        price = page.search("div.price")
+        html += "<h1>#{title.text} - #{price.text}</h1>"
+
+        images.each do |image|
+          html += "<a target='_blank' href='#{full_url(url)}'><img src='#{image}'/></a>"
+        end
+        #puts full_url(url)
+        html += "<br><hr><br>"
+      elsif availability
+        # puts "available #{availability.first}"
+      end
+      #puts "#{availability.first.first} #{url}"
+
+      f.write(html)
+      f.flush
+    }
+  }
+
   f.write("</body></html>")
 end
-
-`open /tmp/listings.html`
